@@ -357,7 +357,7 @@ local function srbxm(rbxm)
 					class = className,
 					properties = {},
 					children = {},
-					service = service and service or nil
+					service = service or nil
 				}
 			end
 		elseif chunkName == "PROP" then
