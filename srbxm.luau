@@ -17,6 +17,7 @@ local read = buffer.readstring
 local readu8 = buffer.readu8
 local readu32 = buffer.readu32
 local readu16 = buffer.readu16
+local readi32 = buffer.readi32
 local readf32 = buffer.readf32
 local readf64 = buffer.readf64
 
@@ -27,6 +28,7 @@ local writeu8 = buffer.writeu8
 local writeu32 = buffer.writeu32
 local rrotate = bit32.rrotate
 
+local enum = Enum
 local udim = UDim.new
 local udim2 = UDim2.new
 local ray = Ray.new
@@ -38,7 +40,7 @@ local color3 = Color3.new
 local color3FromRGB = Color3.fromRGB
 local vector2 = Vector2.new
 local cframe = CFrame.new
-local cframeAngles = CFrame.Angles
+local angles = CFrame.Angles
 local vector3int16 = Vector3int16.new
 local numberSequence = NumberSequence.new
 local numberSequenceKeypoint = NumberSequenceKeypoint.new
@@ -76,29 +78,29 @@ local decompressBuffer = encodingService.DecompressBuffer
 
 local orientations = {
 	[0x02] = cframe(),
-	[0x03] = cframeAngles(rad(90),0,0),
-	[0x05] = cframeAngles(0,rad(180),rad(180)),
-	[0x06] = cframeAngles(rad(-90), 0,0),
-	[0x07] = cframeAngles(0,rad(180),rad(90)),
-	[0x09] = cframeAngles(0,rad(90),rad(90)),
-	[0x0A] = cframeAngles(0,0,rad(90)),
-	[0x0C] = cframeAngles(0,rad(-90),rad(90)),
-	[0x0D] = cframeAngles(rad(-90),rad(-90), 0),
-	[0x0E] = cframeAngles(0,rad(-90),0),
-	[0x10] = cframeAngles(rad(90),rad(-90), 0),
-	[0x11] = cframeAngles(0,rad(90),rad(180)),
-	[0x14] = cframeAngles(0,rad(180),0),
-	[0x15] = cframeAngles(rad(-90),rad(-180), 0),
-	[0x17] = cframeAngles(0,0,rad(180)),
-	[0x18] = cframeAngles(rad(90),rad(180), 0),
-	[0x19] = cframeAngles(0,0,rad(-90)),
-	[0x1B] = cframeAngles(0,rad(-90), rad(-90)),
-	[0x1C] = cframeAngles(0,rad(-180), rad(-90)),
-	[0x1E] = cframeAngles(0,rad(90),rad(-90)),
-	[0x1F] = cframeAngles(rad(90),rad(90),0),
-	[0x20] = cframeAngles(0,rad(90),0),
-	[0x22] = cframeAngles(rad(-90),rad(90),0),
-	[0x23] = cframeAngles(0,rad(-90),rad(180))
+	[0x03] = angles(rad(90),0,0),
+	[0x05] = angles(0,rad(180),rad(180)),
+	[0x06] = angles(rad(-90), 0,0),
+	[0x07] = angles(0,rad(180),rad(90)),
+	[0x09] = angles(0,rad(90),rad(90)),
+	[0x0A] = angles(0,0,rad(90)),
+	[0x0C] = angles(0,rad(-90),rad(90)),
+	[0x0D] = angles(rad(-90),rad(-90), 0),
+	[0x0E] = angles(0,rad(-90),0),
+	[0x10] = angles(rad(90),rad(-90), 0),
+	[0x11] = angles(0,rad(90),rad(180)),
+	[0x14] = angles(0,rad(180),0),
+	[0x15] = angles(rad(-90),rad(-180), 0),
+	[0x17] = angles(0,0,rad(180)),
+	[0x18] = angles(rad(90),rad(180), 0),
+	[0x19] = angles(0,0,rad(-90)),
+	[0x1B] = angles(0,rad(-90), rad(-90)),
+	[0x1C] = angles(0,rad(-180), rad(-90)),
+	[0x1E] = angles(0,rad(90),rad(-90)),
+	[0x1F] = angles(rad(90),rad(90),0),
+	[0x20] = angles(0,rad(90),0),
+	[0x22] = angles(rad(-90),rad(90),0),
+	[0x23] = angles(0,rad(-90),rad(180))
 }
 
 local function lz4(input,uncompressedLength)
@@ -285,6 +287,118 @@ local function readu32BEArray(buffer,position,count)
 	return array,position
 end
 
+local function attributes(buffer)
+	local attributes = {}
+	local count = readu32(buffer,0)
+	local position = 4
+	for i = 1,count do
+		local name
+		name,position = readString(buffer,position)
+		local typeId = readu8(buffer,position) position += 1
+		if typeId == 0x02 then -- String
+			attributes[name],position = readString(buffer,position)
+		elseif typeId == 0x03 then -- Boolean
+			attributes[name] = readu8(buffer,position) == 1 position += 1
+		elseif typeId == 0x04 then -- i32
+			attributes[name] = readi32(buffer,position) position += 4
+		elseif typeId == 0x05 then -- f32
+			attributes[name] = readf32(buffer,position) position += 4
+		elseif typeId == 0x06 then -- f64
+			attributes[name] = readf64(buffer,position) position += 8
+		elseif typeId == 0x09 then -- UDim
+			local scale = readf32(buffer,position) position += 4
+			local offset = readi32(buffer,position) position += 4
+			attributes[name] = udim(scale,offset)
+		elseif typeId == 0x0A then -- UDim2
+			local scaleX = readf32(buffer,position) position += 4
+			local offsetX = readi32(buffer,position) position += 4
+			local scaleY = readf32(buffer,position) position += 4
+			local offsetY = readi32(buffer,position) position += 4
+			attributes[name] = udim2(scaleX,offsetX,scaleY,offsetY)
+		elseif typeId == 0x0E then -- BrickColor
+			attributes[name] = brickColor(readu32(buffer,position)) position += 4
+		elseif typeId == 0X0F then -- Color3
+			local r = readf32(buffer,position) position += 4
+			local g = readf32(buffer,position) position += 4
+			local b = readf32(buffer,position) position += 4
+			attributes[name] = color3(r,g,b)
+		elseif typeId == 0x10 then -- Vector2
+			local x = readf32(buffer,position) position += 4
+			local y = readf32(buffer,position) position += 4
+			attributes[name] = vector2(x,y)
+		elseif typeId == 0x11 then -- Vector3
+			local x = readf32(buffer,position) position += 4
+			local y = readf32(buffer,position) position += 4
+			local z = readf32(buffer,position) position += 4
+			attributes[name] = vector3(x,y,z)
+		elseif typeId == 0x14 then -- CFrame
+			local x = readf32(buffer,position) position += 4
+			local y = readf32(buffer,position) position += 4
+			local z = readf32(buffer,position) position += 4
+			local orientationId = readu8(buffer,position) position += 1
+			if orientationId == 0 then
+				local r00 = readf32(buffer,position) position += 4
+				local r01 = readf32(buffer,position) position += 4
+				local r02 = readf32(buffer,position) position += 4
+				local r10 = readf32(buffer,position) position += 4
+				local r11 = readf32(buffer,position) position += 4
+				local r12 = readf32(buffer,position) position += 4
+				local r20 = readf32(buffer,position) position += 4
+				local r21 = readf32(buffer,position) position += 4
+				local r22 = readf32(buffer,position) position += 4
+				attributes[name] = cframe(x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
+			else
+				attributes[name] = cframe(x,y,z) * orientations[orientationId]
+			end
+		elseif typeId == 0x15 then -- EnumItem
+			local enumName
+			enumName,position = readString(buffer,position)
+			local value = readu32(buffer,position) position += 4
+			attributes[name] = enum[enumName]:FromValue(value)
+		elseif typeId == 0x17 then -- NumberSequence
+			local count = readu32(buffer,position) position += 4
+			local keypoints = tableCreate(count)
+			for i = 1,count do
+				local envelope = readf32(buffer,position) position += 4
+				local time = readf32(buffer,position) position += 4
+				local value = readf32(buffer,position) position += 4
+				keypoints[i] = numberSequenceKeypoint(time,value,envelope)
+			end
+			attributes[name] = numberSequence(keypoints)
+		elseif typeId == 0x19 then -- ColorSequence
+			local count = readu32(buffer,position) position += 4
+			local keypoints = tableCreate(count)
+			for i = 1,count do
+				local envelope = readf32(buffer,position) position += 4
+				local time = readf32(buffer,position) position += 4
+				local r = readf32(buffer,position) position += 4
+				local g = readf32(buffer,position) position += 4
+				local b = readf32(buffer,position) position += 4
+				keypoints[i] = colorSequenceKeypoint(time,color3(r,g,b))
+			end
+			attributes[name] = colorSequence(keypoints)
+		elseif typeId == 0x1B then -- NumberRange
+			local minimum = readf32(buffer,position) position += 4
+			local maximum = readf32(buffer,position) position += 4
+			attributes[name] = numberRange(minimum,maximum)
+		elseif typeId == 0x1C then -- Rect
+			local minimumX = readf32(buffer,position) position += 4
+			local minimumY = readf32(buffer,position) position += 4
+			local maximumX = readf32(buffer,position) position += 4
+			local maximumY = readf32(buffer,position) position += 4
+			attributes[name] = rect(vector2(minimumX,minimumY),vector2(maximumX,maximumY))
+		elseif typeId == 0x21 then -- Font
+			local weight = fontWeightFromValue(fontWeight,readu16(buffer,position)) position += 2
+			local style = fontStyleFromValue(fontStyle,readu8(buffer,position)) position += 1
+			local family,cachedFaceId
+			family,position = readString(buffer,position)
+			cachedFaceId,position = readString(buffer,position)
+			attributes[name] = font(family,weight,style)
+		end
+	end
+	return attributes
+end
+
 local function srbxm(rbxm)
 	assert(read(rbxm,0,8) == "<roblox!","invalid RBXM header")
 	assert(read(rbxm,8,6) == "\x89\xff\x0d\x0a\x1a\x0a","invalid RBXM signature")
@@ -301,6 +415,7 @@ local function srbxm(rbxm)
 	local metadata = {}
 	local strings = {}
 	local instances = {}
+	local nodes = {}
 	
 	local position = 32
 	while true do
@@ -468,30 +583,20 @@ local function srbxm(rbxm)
 					values[referentIndex] = vector3(x[referentIndex],y[referentIndex],z[referentIndex])
 				end
 			elseif typeId == 0x10 then -- CFrame
-				local r00 = tableCreate(instanceCount)
-				local r01 = tableCreate(instanceCount)
-				local r02 = tableCreate(instanceCount)
-				local r10 = tableCreate(instanceCount)
-				local r11 = tableCreate(instanceCount)
-				local r12 = tableCreate(instanceCount)
-				local r20 = tableCreate(instanceCount)
-				local r21 = tableCreate(instanceCount)
-				local r22 = tableCreate(instanceCount)
+				local orientationComponents = tableCreate(instanceCount * 9)
 				for referentIndex = 1,instanceCount do
 					local orientationId = readu8(chunk,position) position += 1
 					if orientationId == 0 then
-						local a00 = readf32(chunk,position) position += 4
-						local a01 = readf32(chunk,position) position += 4
-						local a02 = readf32(chunk,position) position += 4
-						local a10 = readf32(chunk,position) position += 4
-						local a11 = readf32(chunk,position) position += 4
-						local a12 = readf32(chunk,position) position += 4
-						local a20 = readf32(chunk,position) position += 4
-						local a21 = readf32(chunk,position) position += 4
-						local a22 = readf32(chunk,position) position += 4
-						r00[referentIndex],r01[referentIndex],r02[referentIndex] = a00,a01,a02
-						r10[referentIndex],r11[referentIndex],r12[referentIndex] = a10,a11,a12
-						r20[referentIndex],r21[referentIndex],r22[referentIndex] = a20,a21,a22
+						local base = (referentIndex - 1) * 9
+						orientationComponents[base + 1] = readf32(chunk,position) position += 4
+						orientationComponents[base + 2] = readf32(chunk,position) position += 4
+						orientationComponents[base + 3] = readf32(chunk,position) position += 4
+						orientationComponents[base + 4] = readf32(chunk,position) position += 4
+						orientationComponents[base + 5] = readf32(chunk,position) position += 4
+						orientationComponents[base + 6] = readf32(chunk,position) position += 4
+						orientationComponents[base + 7] = readf32(chunk,position) position += 4
+						orientationComponents[base + 8] = readf32(chunk,position) position += 4
+						orientationComponents[base + 9] = readf32(chunk,position) position += 4
 					else
 						values[referentIndex] = orientations[orientationId] -- If an orientation ID is specified, use a CFrame from the lookup table and then multiply it with the position CFrame.
 					end
@@ -504,11 +609,12 @@ local function srbxm(rbxm)
 					if values[referentIndex] then
 						values[referentIndex] *= cframe(x[referentIndex],y[referentIndex],z[referentIndex])
 					else
+						local base = (referentIndex - 1) * 9
 						values[referentIndex] = cframe(
 							x[referentIndex],y[referentIndex],z[referentIndex],
-							r00[referentIndex],r01[referentIndex],r02[referentIndex],
-							r10[referentIndex],r11[referentIndex],r12[referentIndex],
-							r20[referentIndex],r21[referentIndex],r22[referentIndex]
+							orientationComponents[base + 1],orientationComponents[base + 2],orientationComponents[base + 3],
+							orientationComponents[base + 4],orientationComponents[base + 5],orientationComponents[base + 6],
+							orientationComponents[base + 7],orientationComponents[base + 8],orientationComponents[base + 9]
 						)
 					end
 				end
@@ -662,9 +768,16 @@ local function srbxm(rbxm)
 				end
 			end
 			
+			local encodesAttributes = propertyName == "AttributesSerialize"
 			for referentIndex = 1,#referents do
 				local instance = instances[referents[referentIndex]]
 				instance.properties[propertyName] = values[referentIndex]
+				if encodesAttributes then
+					local attributesBuffer = fromstring(values[referentIndex])
+					if len(attributesBuffer) > 0 then
+						instance.attributes = attributes(attributesBuffer)
+					end
+				end
 			end
 		elseif chunkName == "PRNT" then
 			assert(readu8(chunk,position) == 0,"unsupported PRNT version") position += 1
@@ -678,7 +791,7 @@ local function srbxm(rbxm)
 				local child = instances[childReferents[referentIndex]]
 				local parent = instances[parentReferents[referentIndex]]
 				
-				insert(parent and parent.children or instances,child)
+				insert(parent and parent.children or nodes,child)
 			end
 		elseif chunkName == "END\0" then
 			break
@@ -688,7 +801,7 @@ local function srbxm(rbxm)
 	return {
 		metadata = metadata,
 		strings = strings,
-		instances = instances,
+		instances = nodes,
 		size = size
 	}
 end
