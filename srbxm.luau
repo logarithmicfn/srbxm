@@ -15,8 +15,9 @@ local fromstring = buffer.fromstring
 local len = buffer.len
 local read = buffer.readstring
 local readu8 = buffer.readu8
-local readu32 = buffer.readu32
 local readu16 = buffer.readu16
+local readu32 = buffer.readu32
+local readi16 = buffer.readi16
 local readi32 = buffer.readi32
 local readf32 = buffer.readf32
 local readf64 = buffer.readf64
@@ -33,6 +34,7 @@ local udim = UDim.new
 local udim2 = UDim2.new
 local ray = Ray.new
 local vector3 = Vector3.new
+local vector3FromNormalId = Vector3.FromNormalId
 local faces = Faces.new
 local axes = Axes.new
 local brickColor = BrickColor.new
@@ -40,6 +42,7 @@ local color3 = Color3.new
 local color3FromRGB = Color3.fromRGB
 local vector2 = Vector2.new
 local cframe = CFrame.new
+local cframeFromMatrix = CFrame.fromMatrix
 local angles = CFrame.Angles
 local vector3int16 = Vector3int16.new
 local numberSequence = NumberSequence.new
@@ -75,33 +78,6 @@ local zstd = Enum.CompressionAlgorithm.Zstd
 local fontWeightFromValue = fontWeight.FromValue
 local fontStyleFromValue = fontStyle.FromValue
 local decompressBuffer = encodingService.DecompressBuffer
-
-local orientations = {
-	[0x02] = cframe(),
-	[0x03] = angles(rad(90),0,0),
-	[0x05] = angles(0,rad(180),rad(180)),
-	[0x06] = angles(rad(-90), 0,0),
-	[0x07] = angles(0,rad(180),rad(90)),
-	[0x09] = angles(0,rad(90),rad(90)),
-	[0x0A] = angles(0,0,rad(90)),
-	[0x0C] = angles(0,rad(-90),rad(90)),
-	[0x0D] = angles(rad(-90),rad(-90), 0),
-	[0x0E] = angles(0,rad(-90),0),
-	[0x10] = angles(rad(90),rad(-90), 0),
-	[0x11] = angles(0,rad(90),rad(180)),
-	[0x14] = angles(0,rad(180),0),
-	[0x15] = angles(rad(-90),rad(-180), 0),
-	[0x17] = angles(0,0,rad(180)),
-	[0x18] = angles(rad(90),rad(180), 0),
-	[0x19] = angles(0,0,rad(-90)),
-	[0x1B] = angles(0,rad(-90), rad(-90)),
-	[0x1C] = angles(0,rad(-180), rad(-90)),
-	[0x1E] = angles(0,rad(90),rad(-90)),
-	[0x1F] = angles(rad(90),rad(90),0),
-	[0x20] = angles(0,rad(90),0),
-	[0x22] = angles(rad(-90),rad(90),0),
-	[0x23] = angles(0,rad(-90),rad(180))
-}
 
 local function lz4(input,uncompressedLength)
 	local output = bufferCreate(uncompressedLength)
@@ -180,12 +156,12 @@ end
 local function readi64(buffer,position)
 	local high = readu32(buffer,position) position += 4
 	local low = readu32(buffer,position) position += 4
-	return high * 2 ^ 32 + low
+	return high * 2 ^ 32 + low,position
 end
 
 -- Roblox floats/integers use big-endianness.
 -- Roblox floats do NOT follow the IEEE-754 standard, they instead follow a proprietary format.
--- To make compression easier, Roblox integers use a transformation and every array is interleaved.
+-- To make compression easier, Roblox integers use a transformation and every array is interleaved (except for u8 arrays).
 
 local function transform(x)
 	return x % 2 == 0 and x / 2 or -(x + 1) / 2
@@ -202,10 +178,10 @@ local function readRBXi64(buffer,position)
 	return transform(high * 2 ^ 32 + low),position
 end
 
-local scratch = buffer.create(4)
+local scratch32 = bufferCreate(4)
 local function readRBXf32(buffer,position)
-	writeu32(scratch,0,bswap32(rrotate(readu32(buffer,position),1))) position += 4
-	return readf32(scratch,0),position
+	writeu32(scratch32,0,rrotate(bswap32(readu32(buffer,position)),1)) position += 4
+	return readf32(scratch32,0),position
 end
 
 local function interleave(buffer,position,count,length)
@@ -287,6 +263,16 @@ local function readu32BEArray(buffer,position,count)
 	return array,position
 end
 
+local function readu8Array(buffer,position,count)
+	local array = tableCreate(count)
+	
+	for i = 1,count do
+		array[i] = readu8(buffer,position) position += 1
+	end
+
+	return array,position
+end
+
 local function attributes(buffer)
 	local attributes = {}
 	local count = readu32(buffer,0)
@@ -348,7 +334,10 @@ local function attributes(buffer)
 				local r22 = readf32(buffer,position) position += 4
 				attributes[name] = cframe(x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
 			else
-				attributes[name] = cframe(x,y,z) * orientations[orientationId]
+				orientationId -= 1
+				local r0 = vector3FromNormalId(orientationId / 6)
+				local r1 = vector3FromNormalId(orientationId % 6)
+				attributes[name] = cframeFromMatrix(vector3(x,y,z),r0,r1,r0:Cross(r1))
 			end
 		elseif typeId == 0x15 then -- EnumItem
 			local enumName
@@ -505,7 +494,7 @@ local function srbxm(rbxm)
 				values,position = readRBXf32Array(chunk,position,instanceCount)
 			elseif typeId == 0x05 then -- f64
 				for referentIndex = 1,instanceCount do
-					values[referentIndex] = readf64(chunk,position,instanceCount) position += 8
+					values[referentIndex] = readf64(chunk,position) position += 8
 				end
 			elseif typeId == 0x06 then -- UDim
 				local scale,offset
@@ -598,7 +587,10 @@ local function srbxm(rbxm)
 						orientationComponents[base + 8] = readf32(chunk,position) position += 4
 						orientationComponents[base + 9] = readf32(chunk,position) position += 4
 					else
-						values[referentIndex] = orientations[orientationId] -- If an orientation ID is specified, use a CFrame from the lookup table and then multiply it with the position CFrame.
+						orientationId -= 1
+						local r0 = vector3FromNormalId(orientationId / 6)
+						local r1 = vector3FromNormalId(orientationId % 6)
+						values[referentIndex] = {r0,r1,r0:Cross(r1)}
 					end
 				end
 				local x,y,z
@@ -607,7 +599,7 @@ local function srbxm(rbxm)
 				z,position = readRBXf32Array(chunk,position,instanceCount)
 				for referentIndex = 1,instanceCount do
 					if values[referentIndex] then
-						values[referentIndex] *= cframe(x[referentIndex],y[referentIndex],z[referentIndex])
+						values[referentIndex] = cframeFromMatrix(vector3(x[referentIndex],y[referentIndex],z[referentIndex]),values[referentIndex][1],values[referentIndex][2],values[referentIndex][3])
 					else
 						local base = (referentIndex - 1) * 9
 						values[referentIndex] = cframe(
@@ -624,9 +616,9 @@ local function srbxm(rbxm)
 				values,position = readReferentArray(chunk,position,instanceCount)
 			elseif typeId == 0x14 then -- Vector3 i16
 				for referentIndex = 1,instanceCount do
-					local x = readu16(chunk,position) position += 2
-					local y = readu16(chunk,position) position += 2
-					local z = readu16(chunk,position) position += 2
+					local x = readi16(chunk,position) position += 2
+					local y = readi16(chunk,position) position += 2
+					local z = readi16(chunk,position) position += 2
 					values[referentIndex] = vector3int16(x,y,z)
 				end
 			elseif typeId == 0x15 then -- NumberSequence
@@ -686,11 +678,12 @@ local function srbxm(rbxm)
 					end
 				end
 			elseif typeId == 0x1A then -- Color3 u8
+				local r,g,b
+				r,position = readu8Array(chunk,position,instanceCount)
+				g,position = readu8Array(chunk,position,instanceCount)
+				b,position = readu8Array(chunk,position,instanceCount)
 				for referentIndex = 1,instanceCount do
-					local r = readu8(chunk,position) position += 1
-					local g = readu8(chunk,position) position += 1
-					local b = readu8(chunk,position) position += 1
-					values[referentIndex] = color3FromRGB(r,g,b)
+					values[referentIndex] = color3FromRGB(r[referentIndex],g[referentIndex],b[referentIndex])
 				end
 			elseif typeId == 0x1B then -- Roblox i64
 				values,position = readRBXi64Array(chunk,position,instanceCount)
@@ -741,7 +734,7 @@ local function srbxm(rbxm)
 				objectReferents,position = readReferentArray(chunk,position,objectCount)
 				local externalCount = readu32(chunk,position) position += 4
 				local externalReferents
-				externalReferents,position = readReferentArray(chunk,position,objectCount)
+				externalReferents,position = readReferentArray(chunk,position,externalCount)
 				local uriIndex = 1
 				local objectIndex = 1
 				for referentIndex = 1,instanceCount do
